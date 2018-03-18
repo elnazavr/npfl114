@@ -37,7 +37,7 @@ class Network:
             optimizer = None
 
             if args.learning_rate_final is not None:
-                decay_rate = np.power(args.learning_rate_final / args.learning_rate, 1/args.epochs)
+                decay_rate = np.power(args.learning_rate_final / args.learning_rate, 1/(args.epochs-1))
                 args.learning_rate = tf.train.exponential_decay(args.learning_rate, global_step,
                                            args.steps, decay_rate, staircase=True)
             if args.optimizer == "SGD" and args.momentum is not None:
