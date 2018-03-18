@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import numpy as np
 import tensorflow as tf
+from random import shuffle
+
 
 class Network:
     OBSERVATIONS = 4
@@ -19,13 +21,20 @@ class Network:
             self.labels = tf.placeholder(tf.int64, [None], name="labels")
 
             # TODO: Define the model, with the output layers for actions in `output_layer`
+            flattened_images = tf.layers.flatten(self.observations, name="flatten")
+            hidden_layer = tf.layers.dense(flattened_images, 4, activation=None, name="hidden_layer")
+            for i in range(1):
+                hidden_layer = tf.layers.dense(hidden_layer, 4, activation=None, name="hidden_layer"+str(i))
+            
+            output_layer = tf.layers.dense(hidden_layer, self.ACTIONS, activation=None, name="output_layer")
+            
 
             self.actions = tf.argmax(output_layer, axis=1, name="actions")
 
             # Global step
             loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
             global_step = tf.train.create_global_step()
-            self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+            self.training = tf.train.AdamOptimizer(0.001).minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.actions), tf.float32))
@@ -86,10 +95,16 @@ if __name__ == "__main__":
     # Construct the network
     network = Network(threads=args.threads)
     network.construct(args)
-
+    args.batch_size= 100
+    batches_per_epoch = len(observations) // args.batch_size
+    idx =list(range(len(observations)))
+    shuffle(idx)
+    splits = [idx[i:i+batches_per_epoch] for i in range(0, len(idx), batches_per_epoch)]
     # Train
     for i in range(args.epochs):
-        # TODO: Train for an epoch
+        for split in splits:
+            obs, lab = [observations[s] for s in split] , [labels[s] for s in split]
+            network.train(obs, lab)
 
     # Save the network
     network.save("gym_cartpole/model")

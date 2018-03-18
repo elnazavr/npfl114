@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import numpy as np
 import tensorflow as tf
+import math as math
 
 class Network:
     WIDTH = 28
@@ -30,10 +31,24 @@ class Network:
             loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
             global_step = tf.train.create_global_step()
 
+            
             # TODO: Create `optimizer` according to arguments ("SGD", "SGD" with momentum, or "Adam"),
             # utilizing specified learning rate according to args.learning_rate and args.learning_rate_final.
-            self.training = optimizer.minimize(loss, global_step=global_step, name="training")
+            optimizer = None
 
+            if args.learning_rate_final is not None:
+                decay_rate = np.power(args.learning_rate_final / args.learning_rate, 1/args.epochs)
+                args.learning_rate = tf.train.exponential_decay(args.learning_rate, global_step,
+                                           args.steps, decay_rate, staircase=True)
+            if args.optimizer == "SGD" and args.momentum is not None:
+                optimizer = tf.train.MomentumOptimizer(args.learning_rate, args.momentum)
+            elif args.optimizer == "Adam":
+                optimizer = tf.train. AdamOptimizer(args.learning_rate)
+            else:
+                optimizer = tf.train.GradientDescentOptimizer(args.learning_rate)
+            
+                
+            self.training = optimizer.minimize(loss, global_step=global_step, name="training")
             # Summaries
             accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
             summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
@@ -54,7 +69,7 @@ class Network:
         self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
 
     def evaluate(self, dataset, images, labels):
-        self.session.run(self.summaries[dataset], {self.images: images, self.labels: labels})
+        return self.session.run([self.summaries[dataset], self.predictions], {self.images: images, self.labels: labels})
 
 
 if __name__ == "__main__":
@@ -97,6 +112,8 @@ if __name__ == "__main__":
     mnist = mnist.input_data.read_data_sets(".", reshape=False, seed=42)
     batches_per_epoch = mnist.train.num_examples // args.batch_size
 
+    args.steps = batches_per_epoch
+
     # Construct the network
     network = Network(threads=args.threads)
     network.construct(args)
@@ -108,8 +125,10 @@ if __name__ == "__main__":
             network.train(images, labels)
 
         network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
-    network.evaluate("test", mnist.test.images, mnist.test.labels)
 
     # TODO: Compute accuracy on the test set and print it as percentage rounded
-    # to two decimal places.
-    print("{:.2f}".format(100 * accuracy))
+    # to two decimal places.summary, predictions = network.evaluate("test", mnist.test.images, mnist.test.labels)
+    
+    summary, predictions = network.evaluate("test", mnist.test.images, mnist.test.labels)
+    accuracy = sum((mnist.test.labels==predictions))/len(predictions)
+    print("{:.2f}".format(accuracy*100))
