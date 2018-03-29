@@ -28,8 +28,8 @@ class Network:
             # TODO: Implement dropout on the hidden layer using tf.layers.dropout,
             # with using dropout date of args.dropout. The dropout must be active only
             # during training -- use `self.is_training` placeholder to control the
-            # `training` argument of tf.layers.dropout. Store the result to `hidden_layer_dropout`.
-
+            # `training` argument of tf.layers.dropout. Store the result to `hidden_layer_dropout`
+            hidden_layer_dropout = tf.layers.dropout(hidden_layer, args.dropout, training=self.is_training)
             output_layer = tf.layers.dense(hidden_layer_dropout, self.LABELS, activation=None, name="output_layer")
             self.predictions = tf.argmax(output_layer, axis=1)
 
@@ -56,11 +56,12 @@ class Network:
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, images, labels):
-        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels})
+        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels, self.is_training: True})
 
     def evaluate(self, dataset, images, labels):
-        self.session.run(self.summaries[dataset], {self.images: images, self.labels: labels})
+        return self.session.run([self.summaries[dataset], self.predictions], {self.images: images, self.labels: labels, self.is_training: False})
 
+    
 
 if __name__ == "__main__":
     import argparse
@@ -115,4 +116,6 @@ if __name__ == "__main__":
 
     # TODO: Compute accuracy on the test set and print it as percentage rounded
     # to two decimal places.
-    print("{:.2f}".format(100 * accuracy))
+    summary, predictions = network.evaluate("test", mnist.test.images, mnist.test.labels)
+    accuracy = sum((mnist.test.labels==predictions))/len(predictions)
+    print("{:.2f}".format(accuracy*100))
