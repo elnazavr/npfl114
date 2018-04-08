@@ -17,6 +17,45 @@ class Network:
     def construct(self, args):
         with self.session.graph.as_default():
             # TODO: Construct the network and training operation.
+            self.images = tf.placeholder(tf.float32, [None, self.HEIGHT, self.WIDTH, 1], name="images")
+            self.labels = tf.placeholder(tf.int64, [None], name="labels")
+            self.is_training = tf.placeholder(tf.bool, [], name="is_training")
+            cnn_list = args.cnn.split(",")
+            #features = tf.layers.flatten(self.images, name="flatten")
+            features = self.images
+            self.is_training = tf.placeholder(tf.bool, [], name="is_training")
+            for layer in cnn_list:
+                layer = layer.replace(" ", "")
+                param = layer.split("-")
+                if param[0]=='C':
+                    filters = int(param[1])
+                    kernel_size = int(param[2])
+                    stride = int(param[3])
+                    pad = param[4]
+                    features = tf.layers.conv2d(features, filters, kernel_size, strides=(stride, stride), padding=pad, activation = tf.nn.relu)
+                elif param[0]=='BN':
+                    features = tf.layers.batch_normalization(features)
+                elif param[0]=='M':                    
+                    kernel_size = int(param[1])
+                    stride = int(param[2])
+                    features = tf.layers.max_pooling2d(features,kernel_size, strides=(stride, stride))
+                elif param[0]=='F':
+                    features = tf.layers.flatten(features)
+                elif param[0]=='D':
+                    dropout=float(param[1])
+                    features = tf.layers.dropout(features, dropout, training =self.is_training)
+                elif param[0]=='R':
+                    hidden_layer = int(param[1])
+                    features = tf.layers.dense(features, hidden_layer, activation=tf.nn.relu)
+
+
+            output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+            self.predictions = tf.argmax(output_layer, axis=1)
+
+            # Training
+            loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
+            global_step = tf.train.create_global_step()
+            self.training = tf.train.RMSPropOptimizer(0.001).minimize(loss, global_step=global_step, name="training")
 
             # Summaries
             self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
@@ -36,12 +75,15 @@ class Network:
                 tf.contrib.summary.initialize(session=self.session, graph=self.session.graph)
 
     def train(self, images, labels):
-        # TODO
-        pass
+        self.session.run([self.training, self.summaries["train"]], {self.images: images, self.labels: labels,self.is_training: True})
 
     def evaluate(self, dataset, images, labels):
-        # TODO
-        pass
+        accuracy, _ = self.session.run([self.accuracy, self.summaries[dataset]], {self.images: images, self.labels: labels, self.is_training: False})
+        return accuracy
+    
+    def predict(self, dataset, images, labels):
+        predictions, _ = self.session.run([self.predictions, self.summaries[dataset]], {self.images: images, self.labels: labels, self.is_training: False})
+        return predictions
 
 
 if __name__ == "__main__":
@@ -57,9 +99,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", default=None, type=int, help="Batch size.")
     parser.add_argument("--epochs", default=None, type=int, help="Number of epochs.")
+    parser.add_argument("--cnn", default=None, type=str, help="Description of the CNN architecture.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     args = parser.parse_args()
-
+    args.cnn = "C-16-3-1-same,BN,C-64-5-1-same,BN,M-2-2,D-0.5,C-16-3-1-same,BN,C-64-5-1-same,BN,M-2-2,D-0.5,F,R-512,D-0.5"
     # Create logdir name
     args.logdir = "logs/{}-{}-{}".format(
         os.path.basename(__file__),
@@ -69,9 +112,11 @@ if __name__ == "__main__":
     if not os.path.exists("logs"): os.mkdir("logs") # TF 1.6 will do this by itself
 
     # Load the data
-    from tensorflow.examples.tutorials import mnist
-    mnist = mnist.input_data.read_data_sets("mnist-gan", reshape=False, seed=42,
-                                            source_url="https://ufal.mff.cuni.cz/~straka/courses/npfl114/1718/mnist-gan/")
+    from tensorflow.examples.tutorials import mnist as mn
+    mnist = mn.input_data.read_data_sets(".", reshape=False, seed=42)
+    
+    mnist_gan = mn.input_data.read_data_sets("mnist-gan", reshape=False, seed=42,\
+                                           source_url="https://ufal.mff.cuni.cz/~straka/courses/npfl114/1718/mnist-gan/")
 
     # Construct the network
     network = Network(threads=args.threads)
@@ -82,11 +127,16 @@ if __name__ == "__main__":
         while mnist.train.epochs_completed == i:
             images, labels = mnist.train.next_batch(args.batch_size)
             network.train(images, labels)
+            
+            images, labels = mnist_gan.train.next_batch(args.batch_size)
+            network.train(images, labels)
 
-        network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
+        acc=network.evaluate("dev", mnist.validation.images, mnist.validation.labels)
+        print(i,acc)
 
     # TODO: Compute test_labels, as numbers 0-9, corresponding to mnist.test.images
-
+    labels = [0]* len(mnist.test.images)
+    test_labels = network.predict("test", mnist.test.images, labels)
     with open("mnist_competition_test.txt", "w") as test_file:
         for label in test_labels:
             print(label, file=test_file)
