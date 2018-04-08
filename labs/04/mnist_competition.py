@@ -138,5 +138,5 @@ if __name__ == "__main__":
     labels = [0]* len(mnist.test.images)
     test_labels = network.predict("test", mnist.test.images, labels)
     with open("mnist_competition_test.txt", "w") as test_file:
-        for label in test_labels:
+	for label in test_labels:
             print(label, file=test_file)
