@@ -64,33 +64,77 @@ class Network:
                                                                        intra_op_parallelism_threads=threads))
 
     def construct(self, args):
-        with self.session.graph.as_default():
-            # Inputs
-            self.voxels = tf.placeholder(
-                tf.float32, [None, args.modelnet_dim, args.modelnet_dim, args.modelnet_dim, 1], name="voxels")
-            self.labels = tf.placeholder(tf.int64, [None], name="labels")
-            self.is_training = tf.placeholder(tf.bool, [], name="is_training")
+        with tf.device('/device:GPU:2'):
+            with self.session.graph.as_default():
+                # Inputs
+                self.voxels = tf.placeholder(
+                    tf.float32, [None, args.modelnet_dim, args.modelnet_dim, args.modelnet_dim, 1], name="voxels")
+                self.labels = tf.placeholder(tf.int64, [None], name="labels")
+                self.is_training = tf.placeholder(tf.bool, [], name="is_training")
 
-            # TODO: Computation and training.
-            #
-            # The code below assumes that:
-            # - loss is stored in `self.loss`
-            # - training is stored in `self.training`
-            # - label predictions are stored in `self.predictions`
+                # TODO: Computation and training.
+                #
+                # The code below assumes that:
+                # - loss is stored in `self.loss`
+                # - training is stored in `self.training`
+                # - label predictions are stored in `self.predictions`
 
-            # Summaries
-            self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
-            summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
-            self.summaries = {}
-            with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(8):
-                self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", self.loss),
-                                           tf.contrib.summary.scalar("train/accuracy", self.accuracy)]
-            with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
-                self.given_loss = tf.placeholder(tf.float32, [], name="given_loss")
-                self.given_accuracy = tf.placeholder(tf.float32, [], name="given_accuracy")
-                for dataset in ["dev", "test"]:
-                    self.summaries[dataset] = [tf.contrib.summary.scalar(dataset + "/loss", self.given_loss),
-                                               tf.contrib.summary.scalar(dataset + "/accuracy", self.given_accuracy)]
+                cnn_list = args.cnn.split(",")
+                #features = tf.layers.flatten(self.images, name="flatten")
+                features = self.images
+                for layer in cnn_list:
+                    layer = layer.replace(" ", "")
+                    param = layer.split("-")                
+                    if param[0]=='CB':
+                        filters = int(param[1])
+                        kernel_size = int(param[2])
+                        stride = int(param[3])
+                        pad = param[4]
+                        features = tf.layers.conv2d(features, filters, kernel_size, strides=(stride, stride), padding=pad, use_bias=False, activation = None)
+                        features = tf.layers.batch_normalization(features, training=self.is_training)
+                        features = tf.nn.relu(features)
+                    elif param[0]=='C':
+                        filters = int(param[1])
+                        kernel_size = int(param[2])
+                        stride = int(param[3])
+                        pad = param[4]
+                        features = tf.layers.conv2d(features, filters, kernel_size, strides=(stride, stride), padding=pad, activation = tf.nn.relu)
+                    elif param[0]=='M':                    
+                        kernel_size = int(param[1])
+                        stride = int(param[2])
+                        features = tf.layers.max_pooling2d(features,kernel_size, strides=(stride, stride))
+                    elif param[0]=='F':
+                        features = tf.layers.flatten(features)
+                    elif param[0]=='D':
+                        dropout=float(param[1])
+                        features = tf.layers.dropout(features, dropout, training=self.is_training)
+                    elif param[0]=='R':
+                        hidden_layer = int(param[1])
+                        features = tf.layers.dense(features, hidden_layer, activation=tf.nn.relu)
+
+                output_layer = tf.layers.dense(features, self.LABELS, activation=None, name="output_layer")
+                self.predictions = tf.argmax(output_layer, axis=1)
+                
+                
+                loss = tf.losses.sparse_softmax_cross_entropy(self.labels, output_layer, scope="loss")
+                global_step = tf.train.create_global_step()
+                update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+                with tf.control_dependencies(update_ops):
+                    self.training = tf.train.AdamOptimizer().minimize(loss, global_step=global_step, name="training")
+
+                # Summaries
+                self.accuracy = tf.reduce_mean(tf.cast(tf.equal(self.labels, self.predictions), tf.float32))
+                summary_writer = tf.contrib.summary.create_file_writer(args.logdir, flush_millis=10 * 1000)
+                self.summaries = {}
+                with summary_writer.as_default(), tf.contrib.summary.record_summaries_every_n_global_steps(8):
+                    self.summaries["train"] = [tf.contrib.summary.scalar("train/loss", self.loss),
+                                               tf.contrib.summary.scalar("train/accuracy", self.accuracy)]
+                with summary_writer.as_default(), tf.contrib.summary.always_record_summaries():
+                    self.given_loss = tf.placeholder(tf.float32, [], name="given_loss")
+                    self.given_accuracy = tf.placeholder(tf.float32, [], name="given_accuracy")
+                    for dataset in ["dev", "test"]:
+                        self.summaries[dataset] = [tf.contrib.summary.scalar(dataset + "/loss", self.given_loss),
+                                                   tf.contrib.summary.scalar(dataset + "/accuracy", self.given_accuracy)]
 
             # Initialize variables
             self.session.run(tf.global_variables_initializer())
@@ -136,6 +180,7 @@ if __name__ == "__main__":
     parser.add_argument("--modelnet_dim", default=20, type=int, help="Dimension of ModelNet data.")
     parser.add_argument("--threads", default=1, type=int, help="Maximum number of threads to use.")
     parser.add_argument("--train_split", default=None, type=float, help="Ratio of examples to use as train.")
+    parser.add_argument("--cnn", default = None)
     args = parser.parse_args()
 
     # Create logdir name
